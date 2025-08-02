@@ -25,6 +25,7 @@ class MockSinglePageRepository(SinglePageRepository):
             url=f"http://single-page.foo.bar/{page}.html",
             disable_cache=True,
         )
+        self._lazy_wheel = False
 
     def _get_page(self, name: NormalizedName) -> SimpleRepositoryPage:
         fixture = self.FIXTURES / self.url.rsplit("/", 1)[-1]
@@ -34,11 +35,13 @@ class MockSinglePageRepository(SinglePageRepository):
         with fixture.open(encoding="utf-8") as f:
             return SimpleRepositoryPage(self._url, f.read())
 
-    def _download(self, url: str, dest: Path) -> None:
+    def _download(
+        self, url: str, dest: Path, *, raise_accepts_ranges: bool = False
+    ) -> None:
         raise RuntimeError("Tests are not configured for downloads")
 
 
-def test_single_page_repository_get_page():
+def test_single_page_repository_get_page() -> None:
     repo = MockSinglePageRepository("jax_releases")
 
     page = repo.get_page("/ignored")
@@ -52,7 +55,7 @@ def test_single_page_repository_get_page():
         assert link.path.startswith("/jax-releases/")
 
 
-def test_single_page_repository_find_packages():
+def test_single_page_repository_find_packages() -> None:
     repo = MockSinglePageRepository("jax_releases")
 
     dep = Dependency("jaxlib", "0.3.7")

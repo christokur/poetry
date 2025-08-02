@@ -12,15 +12,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
 
-import lockfile
 import requests
+import requests.adapters
 import requests.auth
 import requests.exceptions
 
 from cachecontrol import CacheControlAdapter
 from cachecontrol.caches import FileCache
-from filelock import FileLock
+from requests_toolbelt import user_agent
 
+from poetry.__version__ import __version__
 from poetry.config.config import Config
 from poetry.exceptions import PoetryException
 from poetry.utils.constants import REQUESTS_TIMEOUT
@@ -35,26 +36,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class FileLockLockFile(lockfile.LockBase):  # type: ignore[misc]
-    # The default LockFile from the lockfile package as used by cachecontrol can remain
-    # locked if a process exits ungracefully.  See eg
-    # <https://github.com/python-poetry/poetry/issues/6030#issuecomment-1189383875>.
-    #
-    # FileLock from the filelock package does not have this problem, so we use that to
-    # construct something compatible with cachecontrol.
-    def __init__(
-        self, path: str, threaded: bool = True, timeout: float | None = None
-    ) -> None:
-        super().__init__(path, threaded, timeout)
-        self.file_lock = FileLock(self.lock_file)
-
-    def acquire(self, timeout: float | None = None) -> None:
-        self.file_lock.acquire(timeout=timeout)
-
-    def release(self) -> None:
-        self.file_lock.release()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,16 +90,14 @@ class AuthenticatorRepositoryConfig:
             **(password_manager.get_http_auth(self.name) or {})
         )
 
-        if credential.password is None:
+        if credential.password is not None:
+            return credential
+
+        if password_manager.use_keyring:
             # fallback to url and netloc based keyring entries
-            credential = password_manager.keyring.get_credential(
+            credential = password_manager.get_credential(
                 self.url, self.netloc, username=credential.username
             )
-
-            if credential.password is not None:
-                return HTTPAuthCredential(
-                    username=credential.username, password=credential.password
-                )
 
         return credential
 
@@ -130,25 +109,22 @@ class Authenticator:
         io: IO | None = None,
         cache_id: str | None = None,
         disable_cache: bool = False,
-        pool_size: int = 10,
+        pool_size: int = requests.adapters.DEFAULT_POOLSIZE,
     ) -> None:
         self._config = config or Config.create()
         self._io = io
         self._sessions_for_netloc: dict[str, requests.Session] = {}
         self._credentials: dict[str, HTTPAuthCredential] = {}
         self._certs: dict[str, RepositoryCertificateConfig] = {}
-        self._configured_repositories: dict[
-            str, AuthenticatorRepositoryConfig
-        ] | None = None
+        self._configured_repositories: (
+            dict[str, AuthenticatorRepositoryConfig] | None
+        ) = None
         self._password_manager = PasswordManager(self._config)
         self._cache_control = (
             FileCache(
-                str(
-                    self._config.repository_cache_directory
-                    / (cache_id or "_default_cache")
-                    / "_http"
-                ),
-                lock_class=FileLockLockFile,
+                self._config.repository_cache_directory
+                / (cache_id or "_default_cache")
+                / "_http"
             )
             if not disable_cache
             else None
@@ -157,9 +133,11 @@ class Authenticator:
             self._get_repository_config_for_url
         )
         self._pool_size = pool_size
+        self._user_agent = user_agent("poetry", __version__)
 
     def create_session(self) -> requests.Session:
         session = requests.Session()
+        session.headers["User-Agent"] = self._user_agent
 
         if self._cache_control is None:
             return session
@@ -288,6 +266,10 @@ class Authenticator:
     def get(self, url: str, **kwargs: Any) -> requests.Response:
         return self.request("get", url, **kwargs)
 
+    def head(self, url: str, **kwargs: Any) -> requests.Response:
+        kwargs.setdefault("allow_redirects", False)
+        return self.request("head", url, **kwargs)
+
     def post(self, url: str, **kwargs: Any) -> requests.Response:
         return self.request("post", url, **kwargs)
 
@@ -319,7 +301,7 @@ class Authenticator:
         if credential.password is None:
             parsed_url = urllib.parse.urlsplit(url)
             netloc = parsed_url.netloc
-            credential = self._password_manager.keyring.get_credential(
+            credential = self._password_manager.get_credential(
                 url, netloc, username=credential.username
             )
 
@@ -397,9 +379,9 @@ class Authenticator:
             self._configured_repositories = {}
             for repository_name in self._config.get("repositories", []):
                 url = self._config.get(f"repositories.{repository_name}.url")
-                self._configured_repositories[
-                    repository_name
-                ] = AuthenticatorRepositoryConfig(repository_name, url)
+                self._configured_repositories[repository_name] = (
+                    AuthenticatorRepositoryConfig(repository_name, url)
+                )
 
         return self._configured_repositories
 

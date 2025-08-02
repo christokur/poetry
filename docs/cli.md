@@ -153,7 +153,7 @@ poetry install --without test,docs
 ```
 
 {{% note %}}
-The `--no-dev` option is now deprecated. You should use the `--without dev` notation instead.
+The `--no-dev` option is now deprecated. You should use the `--only main` or `--without dev` notation instead.
 {{% /note %}}
 
 You can also select optional dependency groups with the `--with` option.
@@ -189,7 +189,7 @@ The `--sync` can be combined with group-related options:
 ```bash
 poetry install --without dev --sync
 poetry install --with docs --sync
-poetry install --only dev
+poetry install --only dev --sync
 ```
 
 You can also specify the extras you want installed
@@ -262,7 +262,7 @@ is set to `false` because the old installer always compiles source files to byte
 * `--extras (-E)`: Features to install (multiple values allowed).
 * `--all-extras`: Install all extra features (conflicts with --extras).
 * `--compile`: Compile Python source files to bytecode.
-* `--no-dev`: Do not install dev dependencies. (**Deprecated**, use `--without dev` or `--only main` instead)
+* `--no-dev`: Do not install dev dependencies. (**Deprecated**, use `--only main` or `--without dev` instead)
 * `--remove-untracked`: Remove dependencies not presented in the lock file. (**Deprecated**, use `--sync` instead)
 
 {{% note %}}
@@ -287,10 +287,13 @@ If you just want to update a few packages and not all, you can list them as such
 poetry update requests toml
 ```
 
-Note that this will not update versions for dependencies outside their version constraints specified
-in the `pyproject.toml` file. In other terms, `poetry update foo` will be a no-op if the version constraint
-specified for `foo` is `~2.3` or `2.3` and `2.4` is available. In order for `foo` to be updated, you must
-update the constraint, for example `^2.3`. You can do this using the `add` command.
+Note that this will not update versions for dependencies outside their
+[version constraints]({{< relref "dependency-specification#version-constraints" >}})
+specified in the `pyproject.toml` file.
+In other terms, `poetry update foo` will be a no-op if the version constraint
+specified for `foo` is `~2.3` or `2.3` and `2.4` is available.
+In order for `foo` to be updated, you must update the constraint, for example `^2.3`.
+You can do this using the `add` command.
 
 ### Options
 
@@ -298,8 +301,9 @@ update the constraint, for example `^2.3`. You can do this using the `add` comma
 * `--with`: The optional dependency groups to include.
 * `--only`: The only dependency groups to include.
 * `--dry-run` : Outputs the operations but will not execute anything (implicitly enables --verbose).
-* `--no-dev` : Do not update the development dependencies. (**Deprecated**, use `--without dev` or `--only main` instead)
+* `--no-dev` : Do not update the development dependencies. (**Deprecated**, use `--only main` or `--without dev` instead)
 * `--lock` : Do not perform install (only update the lockfile).
+* `--sync`: Synchronize the environment with the locked packages and the specified groups.
 
 {{% note %}}
 When `--only` is specified, `--with` and `--without` options are ignored.
@@ -315,6 +319,14 @@ poetry will choose a suitable one based on the available package versions.
 ```bash
 poetry add requests pendulum
 ```
+
+{{% note %}}
+A package is looked up, by default, only from the [Default Package Source]({{< relref "repositories/#default-package-source" >}}).
+You can modify the default source (PyPI); or add and use [Supplemental Package Sources]({{< relref "repositories/#supplemental-package-sources" >}})
+or [Explicit Package Sources]({{< relref "repositories/#explicit-package-sources" >}}).
+
+For more information, refer to the [Package Sources]({{< relref "repositories/#package-sources" >}}) documentation.
+{{% /note %}}
 
 You can also specify a constraint when adding a package:
 
@@ -374,8 +386,8 @@ poetry add git+https://github.com/sdispater/pendulum.git#develop
 poetry add git+https://github.com/sdispater/pendulum.git#2.0.5
 
 # or using SSH instead:
-poetry add git+ssh://github.com/sdispater/pendulum.git#develop
-poetry add git+ssh://github.com/sdispater/pendulum.git#2.0.5
+poetry add git+ssh://git@github.com:sdispater/pendulum.git#develop
+poetry add git+ssh://git@github.com:sdispater/pendulum.git#2.0.5
 ```
 
 or reference a subdirectory:
@@ -409,6 +421,11 @@ my-package = {path = "../my/path", develop = true}
 {{% note %}}
 Before poetry 1.1 path dependencies were installed in editable mode by default. You should always set the `develop` attribute explicitly,
 to make sure the behavior is the same for all poetry versions.
+{{% /note %}}
+
+{{% note %}}
+The `develop` attribute is a Poetry-specific feature, so it is not included in the package distribution metadata.
+In other words, it is only considered when using Poetry to install the project.
 {{% /note %}}
 
 If the package(s) you want to install provide extras, you can specify them
@@ -471,6 +488,7 @@ about dependency groups.
 * `--group (-G)`: The group to remove the dependency from.
 * `--dev (-D)`: Removes a package from the development dependencies. (**Deprecated**, use `-G dev` instead)
 * `--dry-run` : Outputs the operations but will not execute anything (implicitly enables --verbose).
+* `--lock`: Do not perform operations (only update the lockfile).
 
 
 ## show
@@ -502,14 +520,15 @@ required by
 ### Options
 
 * `--without`: The dependency groups to ignore.
-* `--why`: When showing the full list, or a `--tree` for a single package, display why a package is included.
+* `--why`: When showing the full list, or a `--tree` for a single package, display whether they are a direct dependency or required by other packages.
 * `--with`: The optional dependency groups to include.
 * `--only`: The only dependency groups to include.
-* `--no-dev`: Do not list the dev dependencies. (**Deprecated**, use `--without dev` or `--only main` instead)
+* `--no-dev`: Do not list the dev dependencies. (**Deprecated**, use `--only main` or `--without dev` instead)
 * `--tree`: List the dependencies as a tree.
 * `--latest (-l)`: Show the latest version.
 * `--outdated (-o)`: Show the latest version but only for packages that are outdated.
 * `--all (-a)`: Show all packages (even those not compatible with current system).
+* `--top-level (-T)`: Only show explicitly defined packages.
 
 {{% note %}}
 When `--only` is specified, `--with` and `--without` options are ignored.
@@ -529,6 +548,7 @@ Note that, at the moment, only pure python wheels are supported.
 ### Options
 
 * `--format (-f)`: Limit the format to either `wheel` or `sdist`.
+* `--output (-o)`: Set output directory for build artifacts. Default is `dist`.
 
 ## publish
 
@@ -554,6 +574,7 @@ Should match a repository name set by the [`config`](#config) command.
 * `--password (-p)`: The password to access the repository.
 * `--cert`: Certificate authority to access the repository.
 * `--client-cert`: Client certificate to access the repository.
+* `--dist-dir`: Dist directory where built artifact are stored. Default is `dist`.
 * `--build`: Build the package before publishing.
 * `--dry-run`: Perform all actions except upload the package.
 * `--skip-existing`: Ignore errors from files already existing in the repository.
@@ -574,6 +595,14 @@ poetry config [options] [setting-key] [setting-value1] ... [setting-valueN]
 
 `setting-key` is a configuration option name and `setting-value1` is a configuration value.
 See [Configuration]({{< relref "configuration" >}}) for all available settings.
+
+{{% warning %}}
+Use `--` to terminate option parsing if your values may start with a hyphen (`-`), e.g.
+```bash
+poetry config http-basic.custom-repo gitlab-ci-token -- ${GITLAB_JOB_TOKEN}
+```
+Without `--` this command will fail if `${GITLAB_JOB_TOKEN}` starts with a hyphen.
+{{% /warning%}}
 
 ### Options
 
@@ -623,8 +652,9 @@ As such, `exit` should be used to properly exit the shell and the virtual enviro
 
 ## check
 
-The `check` command validates the structure of the `pyproject.toml` file
-and returns a detailed report if there are any errors.
+The `check` command validates the content of the `pyproject.toml` file
+and its consistency with the `poetry.lock` file.
+It returns a detailed report if there are any errors.
 
 {{% note %}}
 This command is also available as a pre-commit hook. See [pre-commit hooks]({{< relref "pre-commit-hooks#poetry-check">}}) for more information.
@@ -633,6 +663,10 @@ This command is also available as a pre-commit hook. See [pre-commit hooks]({{< 
 ```bash
 poetry check
 ```
+
+### Options
+
+* `--lock`: Verifies that `poetry.lock` exists for the current `pyproject.toml`.
 
 ## search
 
@@ -657,7 +691,7 @@ poetry lock
 
 ### Options
 
-* `--check`: Verify that `poetry.lock` is consistent with `pyproject.toml`
+* `--check`: Verify that `poetry.lock` is consistent with `pyproject.toml`. (**Deprecated**) Use `poetry check --lock` instead.
 * `--no-update`: Do not update locked versions, only refresh lock file.
 
 ## version
@@ -691,8 +725,17 @@ The table below illustrates the effect of these rules with concrete examples.
 | prerelease | 1.0.3a0 | 1.0.3a1 |
 | prerelease | 1.0.3b0 | 1.0.3b1 |
 
+The option `--next-phase` allows the increment of prerelease phase versions.
+
+| rule                    | before   | after    |
+|-------------------------|----------|----------|
+| prerelease --next-phase | 1.0.3a0  | 1.0.3b0  |
+| prerelease --next-phase | 1.0.3b0  | 1.0.3rc0 |
+| prerelease --next-phase | 1.0.3rc0 | 1.0.3    |
+
 ### Options
 
+* `--next-phase`: Increment the phase of the current version.
 * `--short (-s)`: Output the version number only.
 * `--dry-run`: Do not update pyproject.toml file.
 
@@ -704,9 +747,17 @@ This command exports the lock file to other formats.
 poetry export -f requirements.txt --output requirements.txt
 ```
 
+{{% warning %}}
+This command is provided by the [Export Poetry Plugin](https://github.com/python-poetry/poetry-plugin-export).
+In a future version of Poetry this plugin will not be installed by default anymore.
+In order to avoid a breaking change and make your automation forward-compatible,
+please install poetry-plugin-export explicitly.
+See [Using plugins]({{< relref "plugins#using-plugins" >}}) for details on how to install a plugin.
+{{% /warning %}}
+
 {{% note %}}
-This command is provided by the [Export Poetry Plugin](https://github.com/python-poetry/poetry-plugin-export)
-and is also available as a pre-commit hook. See [pre-commit hooks]({{< relref "pre-commit-hooks#poetry-export" >}}) for more information.
+This command is also available as a pre-commit hook.
+See [pre-commit hooks]({{< relref "pre-commit-hooks#poetry-export" >}}) for more information.
 {{% /note %}}
 
 {{% note %}}
@@ -778,15 +829,18 @@ For example, to add the `pypi-test` source, you can run:
 poetry source add pypi-test https://test.pypi.org/simple/
 ```
 
-{{% note %}}
-You cannot use the name `pypi` as it is reserved for use by the default PyPI source.
-{{% /note %}}
+You cannot use the name `pypi` for a custom repository as it is reserved for use by
+the default PyPI source. However, you can set the priority of PyPI:
+
+```bash
+poetry source add --priority=explicit pypi
+```
 
 #### Options
 
 * `--default`: Set this source as the [default]({{< relref "repositories#default-package-source" >}}) (disable PyPI). Deprecated in favor of `--priority`.
 * `--secondary`: Set this source as a [secondary]({{< relref "repositories#secondary-package-sources" >}}) source. Deprecated in favor of `--priority`.
-* `--priority`: Set the priority of this source. Accepted values are: [`default`]({{< relref "repositories#default-package-source" >}}), [`secondary`]({{< relref "repositories#secondary-package-sources" >}}), and [`explicit`]({{< relref "repositories#explicit-package-sources" >}}). Refer to the dedicated sections in [Repositories]({{< relref "repositories" >}}) for more information.
+* `--priority`: Set the priority of this source. Accepted values are: [`default`]({{< relref "repositories#default-package-source" >}}), [`secondary`]({{< relref "repositories#secondary-package-sources" >}}), [`supplemental`]({{< relref "repositories#supplemental-package-sources" >}}), and [`explicit`]({{< relref "repositories#explicit-package-sources" >}}). Refer to the dedicated sections in [Repositories]({{< relref "repositories" >}}) for more information.
 
 {{% note %}}
 At most one of the options above can be provided. See [package sources]({{< relref "repositories#package-sources" >}}) for more information.
@@ -807,7 +861,8 @@ poetry source show pypi-test
 ```
 
 {{% note %}}
-This command will only show sources configured via the `pyproject.toml` and does not include PyPI.
+This command will only show sources configured via the `pyproject.toml`
+and does not include the implicit default PyPI.
 {{% /note %}}
 
 ### source remove
@@ -868,6 +923,13 @@ The `self` namespace regroups sub commands to manage the Poetry installation its
 Use of these commands will create the required `pyproject.toml` and `poetry.lock` files in your
 [configuration directory]({{< relref "configuration" >}}).
 {{% /note %}}
+
+{{% warning %}}
+Especially on Windows, `self` commands that update or remove packages may be problematic
+so that other methods for installing plugins and updating Poetry are recommended.
+See [Using plugins]({{< relref "plugins#using-plugins" >}}) and
+[Installing Poetry]({{< relref "docs#installation" >}}) for more information.
+{{% /warning %}}
 
 ### self add
 
@@ -938,7 +1000,7 @@ poetry self lock
 
 #### Options
 
-* `--check`: Verify that `poetry.lock` is consistent with `pyproject.toml`
+* `--check`: Verify that `poetry.lock` is consistent with `pyproject.toml`. (**Deprecated**)
 * `--no-update`: Do not update locked versions, only refresh lock file.
 
 ### self show

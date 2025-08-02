@@ -9,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import ClassVar
 from typing import cast
 
 from packaging.utils import canonicalize_name
@@ -30,6 +31,7 @@ from poetry.utils._compat import tomllib
 
 
 if TYPE_CHECKING:
+    from packaging.utils import NormalizedName
     from poetry.core.packages.directory_dependency import DirectoryDependency
     from poetry.core.packages.file_dependency import FileDependency
     from poetry.core.packages.url_dependency import URLDependency
@@ -50,8 +52,13 @@ class Locker:
     _VERSION = "2.0"
     _READ_VERSION_RANGE = ">=1,<3"
 
-    _legacy_keys = ["dependencies", "source", "extras", "dev-dependencies"]
-    _relevant_keys = [*_legacy_keys, "group"]
+    _legacy_keys: ClassVar[list[str]] = [
+        "dependencies",
+        "source",
+        "extras",
+        "dev-dependencies",
+    ]
+    _relevant_keys: ClassVar[list[str]] = [*_legacy_keys, "group"]
 
     def __init__(self, lock: Path, local_config: dict[str, Any]) -> None:
         self._lock = lock
@@ -90,6 +97,10 @@ class Locker:
 
         return False
 
+    def set_local_config(self, local_config: dict[str, Any]) -> None:
+        self._local_config = local_config
+        self._content_hash = self._get_content_hash()
+
     def locked_repository(self) -> LockfileRepository:
         """
         Searches and returns a repository of locked packages.
@@ -126,7 +137,6 @@ class Locker:
                 source_subdirectory=source.get("subdirectory"),
             )
             package.description = info.get("description", "")
-            package.category = info.get("category", "main")
             package.optional = info["optional"]
             metadata = cast("dict[str, Any]", lock_data["metadata"])
 
@@ -158,11 +168,13 @@ class Locker:
                     package.files = files
 
             package.python_versions = info["python-versions"]
+
+            package_extras: dict[NormalizedName, list[Dependency]] = {}
             extras = info.get("extras", {})
             if extras:
                 for name, deps in extras.items():
                     name = canonicalize_name(name)
-                    package.extras[name] = []
+                    package_extras[name] = []
 
                     for dep in deps:
                         try:
@@ -178,7 +190,9 @@ class Locker:
                             dependency = Dependency(
                                 dep_name, constraint, extras=extras.split(",")
                             )
-                        package.extras[name].append(dependency)
+                        package_extras[name].append(dependency)
+
+            package.extras = package_extras
 
             if "marker" in info:
                 package.marker = parse_marker(info["marker"])
@@ -314,6 +328,14 @@ class Locker:
             except tomllib.TOMLDecodeError as e:
                 raise RuntimeError(f"Unable to read the lock file ({e}).")
 
+        # if the lockfile doesn't contain a metadata section at all,
+        # it probably needs to be rebuilt completely
+        if "metadata" not in lock_data:
+            raise RuntimeError(
+                "The lock file does not have a metadata entry.\n"
+                "Regenerate the lock file with the `poetry lock` command."
+            )
+
         metadata = lock_data["metadata"]
         lock_version = Version.parse(metadata.get("lock-version", "1.0"))
         current_version = Version.parse(self._VERSION)
@@ -362,8 +384,7 @@ class Locker:
             package.requires,
             key=lambda d: d.name,
         ):
-            if dependency.pretty_name not in dependencies:
-                dependencies[dependency.pretty_name] = []
+            dependencies.setdefault(dependency.pretty_name, [])
 
             constraint = inline_table()
 
@@ -425,13 +446,9 @@ class Locker:
             "name": package.pretty_name,
             "version": package.pretty_version,
             "description": package.description or "",
-            "category": package.category,
             "optional": package.optional,
             "python-versions": package.python_versions,
-            "files": sorted(
-                package.files,
-                key=lambda x: x["file"],  # type: ignore[no-any-return]
-            ),
+            "files": sorted(package.files, key=lambda x: x["file"]),
         }
 
         if dependencies:

@@ -3,13 +3,13 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import locale
 import os
 
 from base64 import urlsafe_b64encode
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from poetry.core.constraints.version import Version
 from poetry.core.masonry.builders.builder import Builder
 from poetry.core.masonry.builders.sdist import SdistBuilder
 from poetry.core.masonry.utils.package_include import PackageInclude
@@ -61,8 +61,7 @@ class EditableBuilder(Builder):
                     "  - <warning>Falling back on using a <b>setup.py</b></warning>"
                 )
                 self._setup_build()
-                path: Path = self._path
-                return path
+                return self._path
 
             self._run_build_script(self._package.build_script)
 
@@ -79,8 +78,7 @@ class EditableBuilder(Builder):
         added_files += self._add_scripts()
         self._add_dist_info(added_files)
 
-        path = self._path
-        return path
+        return self._path
 
     def _run_build_script(self, build_script: str) -> None:
         with build_environment(poetry=self._poetry, env=self._env, io=self._io) as env:
@@ -101,16 +99,7 @@ class EditableBuilder(Builder):
                 f.write(decode(builder.build_setup()))
 
         try:
-            if self._env.pip_version < Version.from_parts(19, 0):
-                pip_install(self._path, self._env, upgrade=True, editable=True)
-            else:
-                # Temporarily rename pyproject.toml
-                renamed_pyproject = self._poetry.file.with_suffix(".tmp")
-                self._poetry.file.path.rename(renamed_pyproject)
-                try:
-                    pip_install(self._path, self._env, upgrade=True, editable=True)
-                finally:
-                    renamed_pyproject.rename(self._poetry.file.path)
+            pip_install(self._path, self._env, upgrade=True, editable=True)
         finally:
             if not has_setup:
                 os.remove(setup)
@@ -130,26 +119,24 @@ class EditableBuilder(Builder):
         for file in self._env.site_packages.find(path=pth_file, writable_only=True):
             self._debug(
                 f"  - Removing existing <c2>{file.name}</c2> from <b>{file.parent}</b>"
-                f" for {self._poetry.file.parent}"
+                f" for {self._poetry.file.path.parent}"
             )
-            # We can't use unlink(missing_ok=True) because it's not always available
-            if file.exists():
-                file.unlink()
+            file.unlink(missing_ok=True)
 
         try:
             pth_file = self._env.site_packages.write_text(
-                pth_file, content, encoding="utf-8"
+                pth_file, content, encoding=locale.getpreferredencoding()
             )
             self._debug(
                 f"  - Adding <c2>{pth_file.name}</c2> to <b>{pth_file.parent}</b> for"
-                f" {self._poetry.file.parent}"
+                f" {self._poetry.file.path.parent}"
             )
             return [pth_file]
         except OSError:
             # TODO: Replace with PermissionError
             self._io.write_error_line(
                 f"  - Failed to create <c2>{pth_file.name}</c2> for"
-                f" {self._poetry.file.parent}"
+                f" {self._poetry.file.path.parent}"
             )
             return []
 
@@ -163,19 +150,33 @@ class EditableBuilder(Builder):
         else:
             self._io.write_error_line(
                 "  - Failed to find a suitable script installation directory for"
-                f" {self._poetry.file.parent}"
+                f" {self._poetry.file.path.parent}"
             )
             return []
 
         scripts = entry_points.get("console_scripts", [])
         for script in scripts:
-            name, script = script.split(" = ")
+            name, script_with_extras = script.split(" = ")
+            script_without_extras = script_with_extras.split("[")[0]
             try:
-                module, callable_ = script.split(":")
+                module, callable_ = script_without_extras.split(":")
             except ValueError as exc:
-                raise ValueError(
-                    f"{exc.args}  - Failed to parse script entry point '{script}'"
-                ) from exc
+                msg = (
+                    f"Bad script ({name}): script needs to specify a function within a"
+                    " module like: module(.submodule):function\nInstead got:"
+                    f" {script_with_extras}"
+                )
+                if "not enough values" in str(exc):
+                    msg += (
+                        "\nHint: If the script depends on module-level code, try"
+                        " wrapping it in a main() function and modifying your script"
+                        f' like:\n{name} = "{script_with_extras}:main"'
+                    )
+                elif "too many values" in str(exc):
+                    msg += '\nToo many ":" found!'
+
+                raise ValueError(msg)
+
             callable_holder = callable_.split(".", 1)[0]
 
             script_file = scripts_path.joinpath(name)

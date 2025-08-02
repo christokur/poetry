@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from packaging.utils import canonicalize_name
 from poetry.core.constraints.version import Version
 from poetry.core.packages.dependency import Dependency
 from requests.exceptions import TooManyRedirects
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
     from pytest_mock import MockerFixture
 
+    from tests.types import RequestsSessionGet
+
 
 @pytest.fixture(autouse=True)
 def _use_simple_keyring(with_simple_keyring: None) -> None:
@@ -37,6 +40,7 @@ class MockRepository(PyPiRepository):
 
     def __init__(self, fallback: bool = False) -> None:
         super().__init__(url="http://foo.bar", disable_cache=True, fallback=fallback)
+        self._lazy_wheel = False
 
     def get_json_page(self, name: NormalizedName) -> SimpleJsonPage:
         fixture = self.JSON_FIXTURES / (name + ".json")
@@ -51,10 +55,7 @@ class MockRepository(PyPiRepository):
     ) -> dict[str, Any] | None:
         parts = url.split("/")[1:]
         name = parts[0]
-        if len(parts) == 3:
-            version = parts[1]
-        else:
-            version = None
+        version = parts[1] if len(parts) == 3 else None
 
         if not version:
             fixture = self.JSON_FIXTURES / (name + ".json")
@@ -65,9 +66,12 @@ class MockRepository(PyPiRepository):
             return None
 
         with fixture.open(encoding="utf-8") as f:
-            return json.loads(f.read())
+            data: dict[str, Any] = json.load(f)
+            return data
 
-    def _download(self, url: str, dest: Path) -> None:
+    def _download(
+        self, url: str, dest: Path, *, raise_accepts_ranges: bool = False
+    ) -> None:
         filename = url.split("/")[-1]
 
         fixture = self.DIST_FIXTURES / filename
@@ -132,21 +136,21 @@ def test_package() -> None:
     assert package.name == "requests"
     assert len(package.requires) == 9
     assert len([r for r in package.requires if r.is_optional()]) == 5
-    assert len(package.extras["security"]) == 3
-    assert len(package.extras["socks"]) == 2
+    assert len(package.extras[canonicalize_name("security")]) == 3
+    assert len(package.extras[canonicalize_name("socks")]) == 2
 
     assert package.files == [
         {
             "file": "requests-2.18.4-py2.py3-none-any.whl",
-            "hash": "sha256:6a1b267aa90cac58ac3a765d067950e7dbbf75b1da07e895d1f594193a40a38b",  # noqa: E501
+            "hash": "sha256:6a1b267aa90cac58ac3a765d067950e7dbbf75b1da07e895d1f594193a40a38b",
         },
         {
             "file": "requests-2.18.4.tar.gz",
-            "hash": "sha256:9c443e7324ba5b85070c4a818ade28bfabedf16ea10206da1132edaa6dda237e",  # noqa: E501
+            "hash": "sha256:9c443e7324ba5b85070c4a818ade28bfabedf16ea10206da1132edaa6dda237e",
         },
     ]
 
-    win_inet = package.extras["socks"][0]
+    win_inet = package.extras[canonicalize_name("socks")][0]
     assert win_inet.name == "win-inet-pton"
     assert win_inet.python_versions == "~2.7 || ~2.6"
 
@@ -245,6 +249,30 @@ def test_fallback_inspects_sdist_first_if_no_matching_wheels_can_be_found() -> N
     assert dep.python_versions == "~2.7"
 
 
+def test_fallback_pep_658_metadata(
+    mocker: MockerFixture, get_metadata_mock: RequestsSessionGet
+) -> None:
+    repo = MockRepository(fallback=True)
+
+    mocker.patch.object(repo.session, "get", get_metadata_mock)
+    spy = mocker.spy(repo, "_get_info_from_metadata")
+
+    try:
+        package = repo.package("isort-metadata", Version.parse("4.3.4"))
+    except FileNotFoundError:
+        pytest.fail("Metadata was not successfully retrieved")
+    else:
+        assert spy.call_count > 0
+        assert spy.spy_return is not None
+
+        assert package.name == "isort-metadata"
+        assert len(package.requires) == 1
+
+        dep = package.requires[0]
+        assert dep.name == "futures"
+        assert dep.python_versions == "~2.7"
+
+
 def test_fallback_can_read_setup_to_get_dependencies() -> None:
     repo = MockRepository(fallback=True)
 
@@ -302,7 +330,10 @@ def test_pypi_repository_supports_reading_bz2_files() -> None:
     }
 
     for name, expected_extra in expected_extras.items():
-        assert sorted(package.extras[name], key=lambda r: r.name) == expected_extra
+        assert (
+            sorted(package.extras[canonicalize_name(name)], key=lambda r: r.name)
+            == expected_extra
+        )
 
 
 def test_invalid_versions_ignored() -> None:
@@ -340,7 +371,7 @@ def test_urls() -> None:
     assert repository.authenticated_url == "https://pypi.org/simple/"
 
 
-def test_find_links_for_package_of_supported_types():
+def test_find_links_for_package_of_supported_types() -> None:
     repo = MockRepository()
     package = repo.find_packages(Factory.create_dependency("hbmqtt", "0.9.6"))
 
@@ -353,10 +384,12 @@ def test_find_links_for_package_of_supported_types():
     assert links[0].show_url == "hbmqtt-0.9.6.tar.gz"
 
 
-def test_get_release_info_includes_only_supported_types():
+def test_get_release_info_includes_only_supported_types() -> None:
     repo = MockRepository()
 
-    release_info = repo._get_release_info(name="hbmqtt", version="0.9.6")
+    release_info = repo._get_release_info(
+        name=canonicalize_name("hbmqtt"), version=Version.parse("0.9.6")
+    )
 
     assert len(release_info["files"]) == 1
     assert release_info["files"][0]["file"] == "hbmqtt-0.9.6.tar.gz"
